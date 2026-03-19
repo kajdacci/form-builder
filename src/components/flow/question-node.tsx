@@ -29,6 +29,9 @@ export function QuestionNode({ data }: { data: QuestionNodeData }) {
                 {data.hasAction && (
                     <span className="text-[8px] bg-amber-100 text-amber-700 px-1 rounded">⚡</span>
                 )}
+                {data.hasComment && (
+                    <span className="text-[8px] bg-yellow-200 text-yellow-800 px-1 rounded" title={data.commentText}>💬</span>
+                )}
             </div>
 
             <p className="text-[10px] text-gray-700 leading-tight whitespace-pre-wrap">

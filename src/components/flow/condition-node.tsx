@@ -24,6 +24,7 @@ export function ConditionNode({ data }: { data: ConditionNodeData }) {
             <div className="flex items-center gap-1 mb-1">
                 <span style={{ fontSize: "12px" }}>🔀</span>
                 <span className="text-[9px] font-bold text-purple-600 uppercase tracking-wider">condition</span>
+                {data.hasComment && <span className="text-[8px] bg-yellow-200 text-yellow-800 px-1 rounded" title={data.commentText}>💬</span>}
             </div>
 
             {data.conditions.map((c, i) => (

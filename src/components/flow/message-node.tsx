@@ -14,7 +14,10 @@ export function MessageNode({ data }: { data: MessageNodeData }) {
         >
             <Handle type="target" position={Position.Top} className="!bg-gray-400 !w-2 !h-2" />
 
-            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">message</span>
+            <div className="flex items-center gap-1">
+                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">message</span>
+                {data.hasComment && <span className="text-[8px] bg-yellow-200 text-yellow-800 px-1 rounded" title={data.commentText}>💬</span>}
+            </div>
 
             <p className="text-[10px] text-gray-600 leading-tight mt-1 whitespace-pre-wrap">
                 {data.content || "(pusty)"}

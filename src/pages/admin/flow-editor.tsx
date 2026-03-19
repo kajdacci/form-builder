@@ -43,7 +43,9 @@ export function FlowEditor() {
     const [activeStepId, setActiveStepId] = useState<string | null>(null);
     const [selectedNodeData, setSelectedNodeData] = useState<{ node: StepNodeV2; stepId: string } | null>(null);
     const [translations, setTranslations] = useState<Record<string, string>>({});
+    const [comments, setComments] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
         (async () => {
@@ -60,6 +62,7 @@ export function FlowEditor() {
                 const chatTpl = (tplRes.templates ?? []).find((t: any) => t.steps?.format === "chat_steps");
                 if (chatTpl) {
                     setTemplate(chatTpl);
+                    setComments(chatTpl.actions?._comments ?? {});
                     const s = (chatTpl.steps as ChatStepsV2).steps;
                     setSteps(s);
                     if (s.length > 0) {
@@ -81,6 +84,14 @@ export function FlowEditor() {
         const tr = trans ?? translations;
         if (!t) return;
         const { nodes: flowNodes, edges: flowEdges } = chatStepToFlow(step, t.actions, tr);
+        // Mark nodes with comments
+        const coms = t.actions?._comments ?? comments;
+        for (const n of flowNodes) {
+            const nodeId = n.data?.stepNode?.id ?? n.id;
+            if (coms[nodeId]) {
+                n.data = { ...n.data, hasComment: true, commentText: coms[nodeId] };
+            }
+        }
         setNodes(flowNodes);
         setEdges(flowEdges);
     }, [template, translations]);
@@ -114,8 +125,21 @@ export function FlowEditor() {
             {/* Top bar */}
             <div className="h-12 border-b border-gray-200 flex items-center justify-between px-4 bg-white shrink-0">
                 <h1 className="text-sm font-bold text-gray-800">Form Builder</h1>
-                <button className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
-                    Zapisz
+                <button
+                    onClick={async () => {
+                        if (!template) return;
+                        setSaving(true);
+                        try {
+                            const newActions = { ...template.actions, _comments: comments };
+                            await callEdge("form-template-upsert", { id: template.id, name: template.name, steps: template.steps, actions: newActions });
+                            setTemplate({ ...template, actions: newActions });
+                        } catch (err) { console.error("Save failed:", err); }
+                        finally { setSaving(false); }
+                    }}
+                    disabled={saving}
+                    className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium disabled:opacity-50"
+                >
+                    {saving ? "Zapisuję..." : "Zapisz"}
                 </button>
             </div>
 
@@ -241,6 +265,8 @@ export function FlowEditor() {
                             stepId={selectedNodeData.stepId}
                             translations={translations}
                             actions={template?.actions}
+                            comment={comments[selectedNodeData.node.id] ?? ""}
+                            onCommentChange={(text) => setComments((prev) => ({ ...prev, [selectedNodeData.node.id]: text }))}
                             onClose={() => setSelectedNodeData(null)}
                         />
                     ) : (
@@ -254,11 +280,13 @@ export function FlowEditor() {
     );
 }
 
-function NodeDetailPanel({ node, stepId: _stepId, translations, actions, onClose }: {
+function NodeDetailPanel({ node, stepId: _stepId, translations, actions, comment, onCommentChange, onClose }: {
     node: StepNodeV2;
     stepId: string;
     translations: Record<string, string>;
     actions?: any;
+    comment: string;
+    onCommentChange: (text: string) => void;
     onClose: () => void;
 }) {
     const t = (key: string) => translations[key] ?? key;
@@ -343,6 +371,19 @@ function NodeDetailPanel({ node, stepId: _stepId, translations, actions, onClose
                         </pre>
                     </div>
                 )}
+
+                {/* Comment */}
+                <div className="mt-2 pt-3 border-t border-gray-200">
+                    <label className="text-[9px] font-bold text-amber-600 uppercase tracking-wider">Komentarz / uwagi</label>
+                    <textarea
+                        value={comment}
+                        onChange={(e) => onCommentChange(e.target.value)}
+                        rows={3}
+                        placeholder="Wpisz uwagi do tego node'a..."
+                        className="mt-1 w-full text-xs border border-amber-200 rounded p-2 bg-amber-50 focus:ring-1 focus:ring-amber-400 focus:border-amber-400 resize-none"
+                    />
+                    <p className="text-[8px] text-gray-400 mt-1">Kliknij "Zapisz" na górze żeby zachować komentarze</p>
+                </div>
             </div>
         </div>
     );
