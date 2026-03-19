@@ -1,129 +1,180 @@
+import Dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "@xyflow/react";
-import type { ChatTreeV1, ChatNodeV1 } from "./types";
+import type { ChatStepsV2, ActionsConfig } from "./types";
 
-const STEP_GROUPS: Record<string, { name: string; color: string }> = {
-    greeting: { name: "Powitanie", color: "#e0f2fe" },
-    verify_contact: { name: "Weryfikacja kontaktu", color: "#fef3c7" },
-    card_naming: { name: "Nazwy kart", color: "#ede9fe" },
-    date_selection: { name: "Daty aktywacji", color: "#dcfce7" },
-    device_detection: { name: "Model telefonu", color: "#fce7f3" },
-    consents: { name: "Zgody", color: "#f1f5f9" },
+const STEP_COLORS: Record<string, string> = {
+    greeting: "#e0f2fe",
+    verify_contact: "#fef3c7",
+    card_naming: "#ede9fe",
+    date_selection: "#dcfce7",
+    device_detection: "#fce7f3",
+    consents: "#f1f5f9",
 };
 
-// Map node ID prefix → step group
-function getStepGroup(nodeId: string): string {
-    if (nodeId.startsWith("greeting")) return "greeting";
-    if (
-        nodeId.startsWith("check_source") ||
-        nodeId.startsWith("confirm_") ||
-        nodeId.startsWith("input_change") ||
-        nodeId.startsWith("choose_what") ||
-        nodeId.startsWith("check_allegro") ||
-        nodeId.startsWith("ask_real") ||
-        nodeId.startsWith("input_real")
-    )
-        return "verify_contact";
-    if (
-        nodeId.startsWith("card_") ||
-        nodeId.startsWith("multi_card") ||
-        nodeId.startsWith("single_card") ||
-        nodeId.startsWith("check_card") ||
-        nodeId.startsWith("confirm_card") ||
-        nodeId.startsWith("show_card")
-    )
-        return "card_naming";
-    if (nodeId.startsWith("date_") || nodeId.startsWith("ask_single") || nodeId === "contact_us")
-        return "date_selection";
-    if (nodeId.startsWith("device_") || nodeId === "devices_done") return "device_detection";
-    if (nodeId.startsWith("consent") || nodeId === "done_msg") return "consents";
-    return "other";
-}
-
-export function chatTreeToFlow(tree: ChatTreeV1): { nodes: Node[]; edges: Edge[] } {
+export function chatStepsToFlow(
+    template: ChatStepsV2,
+    actions?: ActionsConfig,
+    translations?: Record<string, string>,
+): { nodes: Node[]; edges: Edge[] } {
     const nodes: Node[] = [];
     const edges: Edge[] = [];
+    const t = (key: string) => translations?.[key] ?? key;
 
-    // Group nodes by step
-    const groups: Record<string, ChatNodeV1[]> = {};
-    for (const [id, node] of Object.entries(tree.nodes)) {
-        const group = getStepGroup(id);
-        if (!groups[group]) groups[group] = [];
-        groups[group].push({ ...node, id });
-    }
+    const g = new Dagre.graphlib.Graph({ compound: true });
+    g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80, marginx: 40, marginy: 40 });
+    g.setDefaultEdgeLabel(() => ({}));
 
-    let groupY = 0;
+    // Create step group nodes + inner nodes
+    for (const step of template.steps) {
+        const groupId = `step_${step.id}`;
 
-    for (const [groupId, groupNodes] of Object.entries(groups)) {
-        const group = STEP_GROUPS[groupId] ?? { name: groupId, color: "#f5f5f5" };
+        // Step group node
+        g.setNode(groupId, { width: 300, height: 80 });
 
-        let nodeX = 0;
-        const nodeY = groupY;
+        nodes.push({
+            id: groupId,
+            type: "group",
+            position: { x: 0, y: 0 },
+            data: {
+                label: step.name,
+                stepId: step.id,
+                scope: step.scope,
+                repeatPerCard: step.repeatPerCard,
+            },
+            style: {
+                background: STEP_COLORS[step.id] ?? "#f5f5f5",
+                border: "2px solid #d1d5db",
+                borderRadius: "16px",
+                padding: "16px",
+                paddingTop: "40px",
+                minWidth: "320px",
+                minHeight: "100px",
+            },
+        });
 
-        for (const chatNode of groupNodes) {
-            const isInput = chatNode.type === "input";
-            const hasButtons = chatNode.component === "buttons" && chatNode.config?.options;
+        // Inner nodes
+        for (const node of step.nodes) {
+            const nodeId = `${step.id}__${node.id}`;
+            const isInput = node.type === "input";
+            const hasAction = actions?.nodes?.[node.id];
+            const contentPreview = node.content ? t(node.content).substring(0, 80) : "";
+            const optionLabels = node.options?.map((o) => t(o)) ?? [];
+
+            g.setNode(nodeId, { width: 240, height: 80 + (optionLabels.length * 20) });
+            g.setParent(nodeId, groupId);
 
             nodes.push({
-                id: chatNode.id,
+                id: nodeId,
                 type: "default",
-                position: { x: nodeX, y: nodeY },
+                position: { x: 0, y: 0 },
+                parentId: groupId,
+                extent: "parent" as const,
                 data: {
-                    label: chatNode.id,
-                    content: chatNode.content?.substring(0, 60) ?? "",
-                    nodeType: chatNode.type,
-                    component: chatNode.component,
-                    scope: chatNode.scope,
-                    options: hasButtons ? chatNode.config?.options : undefined,
-                    field: chatNode.field,
-                    group: groupId,
-                    groupName: group.name,
-                    chatNode,
+                    label: node.id,
+                    content: contentPreview,
+                    nodeType: node.type,
+                    component: node.component,
+                    field: node.field,
+                    options: optionLabels,
+                    hasAction: !!hasAction,
+                    stepNode: node,
+                    stepId: step.id,
                 },
                 style: {
-                    background: isInput ? (chatNode.component === "buttons" ? "#ffffff" : "#f0f9ff") : "#f8fafc",
-                    border: `2px solid ${isInput ? "#3b82f6" : "#e2e8f0"}`,
-                    borderRadius: "12px",
-                    padding: "12px",
+                    background: hasAction ? "#fffbeb" : isInput ? "#ffffff" : "#f8fafc",
+                    border: `2px solid ${hasAction ? "#f59e0b" : isInput ? "#3b82f6" : "#e2e8f0"}`,
+                    borderRadius: "10px",
+                    padding: "8px 12px",
+                    fontSize: "11px",
                     minWidth: "200px",
-                    maxWidth: "280px",
-                    fontSize: "12px",
                 },
             });
 
-            // Edges from branches
-            if (chatNode.branches) {
-                for (let i = 0; i < chatNode.branches.length; i++) {
-                    const b = chatNode.branches[i];
-                    if (b.next && tree.nodes[b.next]) {
+            // Inner edges (within step)
+            if (node.branches) {
+                for (let i = 0; i < node.branches.length; i++) {
+                    const b = node.branches[i];
+                    const targetId = b.next === "__done__" ? null : `${step.id}__${b.next}`;
+                    if (targetId && step.nodes.some((n) => n.id === b.next)) {
+                        g.setEdge(nodeId, targetId);
                         edges.push({
-                            id: `${chatNode.id}-${b.next}-${i}`,
-                            source: chatNode.id,
-                            target: b.next,
-                            label: b.condition.length > 30 ? b.condition.substring(0, 30) + "…" : b.condition,
-                            style: { stroke: "#3b82f6" },
+                            id: `${nodeId}-${targetId}-${i}`,
+                            source: nodeId,
+                            target: targetId,
+                            label: t(b.answer).length > 25 ? t(b.answer).substring(0, 25) + "…" : t(b.answer),
+                            style: { stroke: "#3b82f6", strokeWidth: 1.5 },
                             labelStyle: { fontSize: "9px", fill: "#6b7280" },
                         });
                     }
                 }
             }
 
-            // Edge from next
-            if (chatNode.next && tree.nodes[chatNode.next]) {
-                const hasBranchToNext = chatNode.branches?.some((b) => b.next === chatNode.next);
-                if (!hasBranchToNext) {
+            if (node.next && node.next !== "__done__" && step.nodes.some((n) => n.id === node.next)) {
+                const targetId = `${step.id}__${node.next}`;
+                const hasBranch = node.branches?.some((b) => b.next === node.next);
+                if (!hasBranch) {
+                    g.setEdge(nodeId, targetId);
                     edges.push({
-                        id: `${chatNode.id}-${chatNode.next}`,
-                        source: chatNode.id,
-                        target: chatNode.next,
-                        style: { stroke: "#94a3b8" },
+                        id: `${nodeId}-${targetId}`,
+                        source: nodeId,
+                        target: targetId,
+                        style: { stroke: "#94a3b8", strokeWidth: 1 },
                     });
                 }
             }
-
-            nodeX += 320;
         }
+    }
 
-        groupY += 200;
+    // Step → step edges
+    for (const step of template.steps) {
+        if (step.next) {
+            const sourceId = `step_${step.id}`;
+            const targetId = `step_${step.next}`;
+            g.setEdge(sourceId, targetId);
+            edges.push({
+                id: `${sourceId}-${targetId}`,
+                source: sourceId,
+                target: targetId,
+                style: { stroke: "#1f2937", strokeWidth: 3 },
+                type: "smoothstep",
+            });
+        }
+    }
+
+    // Run dagre layout
+    Dagre.layout(g);
+
+    // Apply positions
+    for (const node of nodes) {
+        const dagreNode = g.node(node.id);
+        if (dagreNode) {
+            if (node.parentId) {
+                // Child node — position relative to parent
+                const parentDagre = g.node(node.parentId);
+                if (parentDagre) {
+                    node.position = {
+                        x: dagreNode.x - parentDagre.x + 20,
+                        y: dagreNode.y - parentDagre.y + 40,
+                    };
+                }
+            } else {
+                node.position = { x: dagreNode.x, y: dagreNode.y };
+            }
+
+            // Resize group to fit children
+            if (node.type === "group") {
+                const children = nodes.filter((n) => n.parentId === node.id);
+                if (children.length > 0) {
+                    const maxX = Math.max(...children.map((c) => c.position.x + 250));
+                    const maxY = Math.max(...children.map((c) => c.position.y + 100));
+                    node.style = {
+                        ...node.style,
+                        width: `${Math.max(maxX + 20, 340)}px`,
+                        height: `${Math.max(maxY + 20, 120)}px`,
+                    };
+                }
+            }
+        }
     }
 
     return { nodes, edges };

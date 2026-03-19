@@ -1,4 +1,45 @@
-// Chat tree v1 format (current)
+// Chat steps v2 format
+export interface StepNodeV2 {
+    id: string;
+    type: "message" | "input";
+    content?: string;
+    component?: string;
+    options?: string[];
+    field?: string;
+    required?: boolean;
+    branches?: { answer: string; next: string }[];
+    next?: string;
+}
+
+export interface StepV2 {
+    id: string;
+    name: string;
+    scope: "order" | "card";
+    repeatPerCard?: boolean;
+    nodes: StepNodeV2[];
+    next: string | null;
+}
+
+export interface ChatStepsV2 {
+    format: "chat_steps";
+    steps: StepV2[];
+}
+
+export interface ActionCall {
+    call: string;
+    params?: Record<string, string>;
+    showPoll?: boolean;
+    showQR?: boolean;
+    pollField?: string;
+    freeze?: boolean;
+}
+
+export interface ActionsConfig {
+    nodes: Record<string, { onAnswer?: Record<string, ActionCall>; onEnter?: ActionCall }>;
+    steps: Record<string, { onComplete?: { save?: string[]; call?: string; params?: Record<string, string> } }>;
+}
+
+// Chat tree v1 format (legacy)
 export interface ChatNodeV1 {
     id: string;
     type: "message" | "input";
@@ -23,8 +64,8 @@ export interface ChatTreeV1 {
 export interface FormTemplate {
     id: string;
     name: string;
-    steps: ChatTreeV1;
-    actions: Record<string, any>;
+    steps: ChatStepsV2 | ChatTreeV1;
+    actions: ActionsConfig;
     is_active: boolean;
     created_at: string;
 }
