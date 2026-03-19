@@ -17,12 +17,14 @@ import { QuestionNode } from "@/components/flow/question-node";
 import { AnswerNode } from "@/components/flow/answer-node";
 import { MessageNode } from "@/components/flow/message-node";
 import { StepHeaderNode } from "@/components/flow/step-header-node";
+import { ConditionNode } from "@/components/flow/condition-node";
 import type { FormTemplate, ChatStepsV2, StepNodeV2 } from "@/lib/types";
 
 const nodeTypes = {
     question: QuestionNode,
     answer: AnswerNode,
     message: MessageNode,
+    condition: ConditionNode,
     stepHeader: StepHeaderNode,
 };
 

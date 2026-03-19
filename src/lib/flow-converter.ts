@@ -157,13 +157,21 @@ export function chatStepsToFlow(
                     });
                 }
             } else {
-                // Message node
-                g.setNode(fullId, { width: 200, height: 50 });
+                // Detect condition vs message
+                const isCondition = !node.content && node.branches && node.branches.length > 0;
+                const nodeType = isCondition ? "condition" : "message";
+
+                g.setNode(fullId, { width: isCondition ? 170 : 200, height: isCondition ? 40 : 50 });
                 stepNodes.push({
                     id: fullId,
-                    type: "message",
+                    type: nodeType,
                     position: { x: 0, y: 0 },
-                    data: {
+                    data: isCondition ? {
+                        label: node.id,
+                        conditions: node.branches!.map((b) => `${b.answer} → ${b.next}`),
+                        stepNode: node,
+                        stepId: step.id,
+                    } : {
                         label: node.id,
                         content: contentPL,
                         stepNode: node,
@@ -171,7 +179,7 @@ export function chatStepsToFlow(
                     },
                 });
 
-                // Message branches (condition-based, no answer nodes)
+                // Branches
                 if (node.branches) {
                     for (const b of node.branches) {
                         if (b.next && b.next !== "__done__" && step.nodes.some((n) => n.id === b.next)) {
