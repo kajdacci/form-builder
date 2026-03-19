@@ -254,7 +254,7 @@ export function FlowEditor() {
     );
 }
 
-function NodeDetailPanel({ node, stepId, translations, actions, onClose }: {
+function NodeDetailPanel({ node, stepId: _stepId, translations, actions, onClose }: {
     node: StepNodeV2;
     stepId: string;
     translations: Record<string, string>;
