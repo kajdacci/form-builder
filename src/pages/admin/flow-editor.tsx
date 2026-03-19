@@ -87,8 +87,8 @@ export function FlowEditor() {
         // Mark nodes with comments
         const coms = t.actions?._comments ?? comments;
         for (const n of flowNodes) {
-            const nodeId = n.data?.stepNode?.id ?? n.id;
-            if (coms[nodeId]) {
+            const nodeId = (n.data as any)?.stepNode?.id ?? n.id;
+            if (coms && coms[nodeId]) {
                 n.data = { ...n.data, hasComment: true, commentText: coms[nodeId] };
             }
         }

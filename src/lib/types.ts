@@ -37,6 +37,8 @@ export interface ActionCall {
 export interface ActionsConfig {
     nodes: Record<string, { onAnswer?: Record<string, ActionCall>; onEnter?: ActionCall }>;
     steps: Record<string, { onComplete?: { save?: string[]; call?: string; params?: Record<string, string> } }>;
+    _comments?: Record<string, string>;
+    [key: string]: any;
 }
 
 // Chat tree v1 format (legacy)
