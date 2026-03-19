@@ -27,73 +27,183 @@ export function chatStepsToFlow(
         const color = STEP_COLORS[step.id] ?? "#f5f5f5";
 
         // Step header
-        const stepLabelId = `step_label_${step.id}`;
+        const stepLabelId = `step_${step.id}`;
         allNodes.push({
             id: stepLabelId,
-            type: "default",
+            type: "stepHeader",
             position: { x: 0, y: globalOffsetY },
             draggable: false,
-            selectable: false,
-            data: { label: `${si + 1}. ${step.name}${step.repeatPerCard ? " (per karta)" : ""}` },
-            style: {
-                background: color,
-                border: "2px solid #9ca3af",
-                borderRadius: "12px",
-                padding: "10px 24px",
-                fontSize: "14px",
-                fontWeight: "bold",
-                width: "300px",
-                textAlign: "center" as const,
+            selectable: true,
+            data: {
+                label: `${si + 1}. ${step.name}`,
+                color,
+                scope: step.scope,
+                repeatPerCard: step.repeatPerCard,
+                stepId: step.id,
             },
         });
 
-        // Dagre layout per step (tree: top-to-bottom)
+        // Build dagre graph for this step
         const g = new Dagre.graphlib.Graph();
-        g.setGraph({ rankdir: "TB", nodesep: 40, ranksep: 80 });
+        g.setGraph({ rankdir: "TB", nodesep: 30, ranksep: 60 });
         g.setDefaultEdgeLabel(() => ({}));
 
+        const stepNodes: Node[] = [];
         const stepEdges: Edge[] = [];
 
-        // Add nodes to dagre
         for (const node of step.nodes) {
-            const optionLabels = node.options?.map((o) => t(o)) ?? [];
-            const h = 60 + optionLabels.length * 16;
-            g.setNode(node.id, { width: 220, height: h });
-        }
+            const fullId = `${step.id}__${node.id}`;
+            const isInput = node.type === "input";
+            const isButtons = node.component === "buttons" && node.branches && node.branches.length > 0;
+            const hasAction = !!actions?.nodes?.[node.id];
+            const contentPL = node.content ? t(node.content).substring(0, 80) : "";
 
-        // Add edges to dagre
-        for (const node of step.nodes) {
-            const nodeId = `${step.id}__${node.id}`;
+            if (isButtons) {
+                // Question node (no options displayed — they become separate nodes)
+                g.setNode(fullId, { width: 240, height: 60 });
+                stepNodes.push({
+                    id: fullId,
+                    type: "question",
+                    position: { x: 0, y: 0 },
+                    data: {
+                        label: node.id,
+                        content: contentPL,
+                        component: node.component,
+                        field: node.field,
+                        hasAction,
+                        stepNode: node,
+                        stepId: step.id,
+                    },
+                });
 
-            if (node.branches) {
-                for (let bi = 0; bi < node.branches.length; bi++) {
-                    const b = node.branches[bi];
-                    if (b.next && b.next !== "__done__" && step.nodes.some((n) => n.id === b.next)) {
-                        g.setEdge(node.id, b.next);
+                // Answer nodes — one per branch
+                for (let bi = 0; bi < node.branches!.length; bi++) {
+                    const b = node.branches![bi];
+                    const answerId = `${fullId}__ans_${bi}`;
+                    const answerText = t(b.answer);
+                    const targetNext = b.next;
+                    const isDone = targetNext === "__done__";
+                    const answerAction = actions?.nodes?.[node.id]?.onAnswer?.[b.answer];
+
+                    g.setNode(answerId, { width: 160, height: 40 });
+                    stepNodes.push({
+                        id: answerId,
+                        type: "answer",
+                        position: { x: 0, y: 0 },
+                        data: {
+                            label: `${node.id}[${bi}]`,
+                            answerText,
+                            targetId: targetNext,
+                            hasAction: !!answerAction,
+                            isDone,
+                            action: answerAction,
+                            stepNode: node,
+                            stepId: step.id,
+                            branchIndex: bi,
+                        },
+                    });
+
+                    // Edge: question → answer
+                    g.setEdge(fullId, answerId);
+                    stepEdges.push({
+                        id: `${fullId}-${answerId}`,
+                        source: fullId,
+                        target: answerId,
+                        type: "smoothstep",
+                        style: { stroke: "#d1d5db", strokeWidth: 1 },
+                    });
+
+                    // Edge: answer → target (within step)
+                    if (!isDone && step.nodes.some((n) => n.id === targetNext)) {
+                        const targetFullId = `${step.id}__${targetNext}`;
+                        g.setEdge(answerId, targetFullId);
                         stepEdges.push({
-                            id: `${nodeId}-${step.id}__${b.next}-b${bi}`,
-                            source: nodeId,
-                            target: `${step.id}__${b.next}`,
-                            label: t(b.answer).length > 18 ? t(b.answer).substring(0, 18) + "…" : t(b.answer),
+                            id: `${answerId}-${targetFullId}`,
+                            source: answerId,
+                            target: targetFullId,
                             type: "smoothstep",
                             style: { stroke: "#3b82f6", strokeWidth: 1.5 },
-                            labelStyle: { fontSize: "8px", fill: "#6b7280" },
                         });
                     }
                 }
-            }
+            } else if (isInput) {
+                // Non-buttons input (text_input, calendar)
+                g.setNode(fullId, { width: 220, height: 50 });
+                stepNodes.push({
+                    id: fullId,
+                    type: "question",
+                    position: { x: 0, y: 0 },
+                    data: {
+                        label: node.id,
+                        content: contentPL,
+                        component: node.component,
+                        field: node.field,
+                        hasAction,
+                        stepNode: node,
+                        stepId: step.id,
+                    },
+                });
 
-            if (node.next && node.next !== "__done__" && step.nodes.some((n) => n.id === node.next)) {
-                const hasBranch = node.branches?.some((b) => b.next === node.next);
-                if (!hasBranch) {
-                    g.setEdge(node.id, node.next);
+                // Edge to next
+                if (node.next && node.next !== "__done__" && step.nodes.some((n) => n.id === node.next)) {
+                    const targetFullId = `${step.id}__${node.next}`;
+                    g.setEdge(fullId, targetFullId);
                     stepEdges.push({
-                        id: `${nodeId}-${step.id}__${node.next}`,
-                        source: nodeId,
-                        target: `${step.id}__${node.next}`,
+                        id: `${fullId}-${targetFullId}`,
+                        source: fullId,
+                        target: targetFullId,
                         type: "smoothstep",
                         style: { stroke: "#94a3b8", strokeWidth: 1 },
                     });
+                }
+            } else {
+                // Message node
+                g.setNode(fullId, { width: 200, height: 50 });
+                stepNodes.push({
+                    id: fullId,
+                    type: "message",
+                    position: { x: 0, y: 0 },
+                    data: {
+                        label: node.id,
+                        content: contentPL,
+                        stepNode: node,
+                        stepId: step.id,
+                    },
+                });
+
+                // Message branches (condition-based, no answer nodes)
+                if (node.branches) {
+                    for (const b of node.branches) {
+                        if (b.next && b.next !== "__done__" && step.nodes.some((n) => n.id === b.next)) {
+                            const targetFullId = `${step.id}__${b.next}`;
+                            g.setEdge(fullId, targetFullId);
+                            stepEdges.push({
+                                id: `${fullId}-${targetFullId}-${b.answer}`,
+                                source: fullId,
+                                target: targetFullId,
+                                type: "smoothstep",
+                                label: b.answer === "*" ? "default" : b.answer.substring(0, 15),
+                                style: { stroke: "#94a3b8", strokeWidth: 1 },
+                                labelStyle: { fontSize: "8px", fill: "#9ca3af" },
+                            });
+                        }
+                    }
+                }
+
+                // Edge to next
+                if (node.next && node.next !== "__done__" && step.nodes.some((n) => n.id === node.next)) {
+                    const hasBranch = node.branches?.some((b) => b.next === node.next);
+                    if (!hasBranch) {
+                        const targetFullId = `${step.id}__${node.next}`;
+                        g.setEdge(fullId, targetFullId);
+                        stepEdges.push({
+                            id: `${fullId}-${targetFullId}`,
+                            source: fullId,
+                            target: targetFullId,
+                            type: "smoothstep",
+                            style: { stroke: "#94a3b8", strokeWidth: 1 },
+                        });
+                    }
                 }
             }
         }
@@ -101,76 +211,29 @@ export function chatStepsToFlow(
         // Run dagre
         Dagre.layout(g);
 
-        // Get bounds for centering
-        let minX = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const node of step.nodes) {
-            const pos = g.node(node.id);
-            if (pos) {
-                minX = Math.min(minX, pos.x - 110);
-                maxX = Math.max(maxX, pos.x + 110);
-                maxY = Math.max(maxY, pos.y + 40);
+        // Apply positions
+        let maxY = 0;
+        const stepStartY = globalOffsetY + 70;
+
+        for (const sn of stepNodes) {
+            const dagreNode = g.node(sn.id);
+            if (dagreNode) {
+                sn.position = { x: dagreNode.x - dagreNode.width / 2, y: stepStartY + dagreNode.y };
+                maxY = Math.max(maxY, dagreNode.y + dagreNode.height);
             }
         }
-        const treeWidth = maxX - minX;
-        const centerOffset = 150 - treeWidth / 2; // center tree around x=150
 
-        // Create reactflow nodes
-        const stepStartY = globalOffsetY + 60;
-        for (const node of step.nodes) {
-            const pos = g.node(node.id);
-            if (!pos) continue;
-
-            const isInput = node.type === "input";
-            const hasAction = !!actions?.nodes?.[node.id];
-            const contentPreview = node.content ? t(node.content).substring(0, 50) : "";
-            const optionLabels = node.options?.map((o) => t(o)) ?? [];
-
-            const nodeId = `${step.id}__${node.id}`;
-
-            let label = node.id;
-            if (contentPreview) label += `\n${contentPreview}`;
-            if (optionLabels.length > 0) label += `\n${optionLabels.map((o) => `[${o}]`).join(" ")}`;
-
-            allNodes.push({
-                id: nodeId,
-                type: "default",
-                position: {
-                    x: pos.x - 110 + centerOffset,
-                    y: stepStartY + pos.y,
-                },
-                data: {
-                    label,
-                    nodeType: node.type,
-                    component: node.component,
-                    field: node.field,
-                    hasAction,
-                    stepNode: node,
-                    stepId: step.id,
-                },
-                style: {
-                    background: hasAction ? "#fffbeb" : isInput ? "#ffffff" : "#f8fafc",
-                    border: `2px solid ${hasAction ? "#f59e0b" : isInput ? "#3b82f6" : "#e2e8f0"}`,
-                    borderRadius: "10px",
-                    padding: "6px 8px",
-                    fontSize: "9px",
-                    width: "220px",
-                    whiteSpace: "pre-wrap" as const,
-                    lineHeight: "1.3",
-                },
-            });
-        }
-
+        allNodes.push(...stepNodes);
         allEdges.push(...stepEdges);
 
-        // Step height
-        globalOffsetY = stepStartY + maxY + 80;
+        globalOffsetY = stepStartY + maxY + 60;
 
         // Step → step edge
         if (step.next) {
             allEdges.push({
-                id: `${stepLabelId}-step_label_${step.next}`,
+                id: `${stepLabelId}-step_${step.next}`,
                 source: stepLabelId,
-                target: `step_label_${step.next}`,
+                target: `step_${step.next}`,
                 type: "smoothstep",
                 style: { stroke: "#1f2937", strokeWidth: 3 },
             });

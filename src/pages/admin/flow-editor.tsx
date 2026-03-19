@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ReactFlow,
     Background,
@@ -13,7 +13,18 @@ import {
 import "@xyflow/react/dist/style.css";
 import { callEdge } from "@/lib/api";
 import { chatStepsToFlow } from "@/lib/flow-converter";
+import { QuestionNode } from "@/components/flow/question-node";
+import { AnswerNode } from "@/components/flow/answer-node";
+import { MessageNode } from "@/components/flow/message-node";
+import { StepHeaderNode } from "@/components/flow/step-header-node";
 import type { FormTemplate, ChatStepsV2, StepNodeV2 } from "@/lib/types";
+
+const nodeTypes = {
+    question: QuestionNode,
+    answer: AnswerNode,
+    message: MessageNode,
+    stepHeader: StepHeaderNode,
+};
 
 export function FlowEditor() {
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -118,6 +129,7 @@ export function FlowEditor() {
                     <ReactFlow
                         nodes={nodes}
                         edges={edges}
+                        nodeTypes={nodeTypes}
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onNodeClick={onNodeClick}
