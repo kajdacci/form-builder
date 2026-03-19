@@ -1,4 +1,3 @@
-import Dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "@xyflow/react";
 import type { ChatStepsV2, ActionsConfig } from "./types";
 
@@ -20,63 +19,62 @@ export function chatStepsToFlow(
     const edges: Edge[] = [];
     const t = (key: string) => translations?.[key] ?? key;
 
-    const g = new Dagre.graphlib.Graph({ compound: true });
-    g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80, marginx: 40, marginy: 40 });
-    g.setDefaultEdgeLabel(() => ({}));
+    let stepY = 0;
 
-    // Create step group nodes + inner nodes
-    for (const step of template.steps) {
-        const groupId = `step_${step.id}`;
+    for (let si = 0; si < template.steps.length; si++) {
+        const step = template.steps[si];
+        const color = STEP_COLORS[step.id] ?? "#f5f5f5";
+        const stepX = 0;
+        const nodeSpacingX = 280;
+        const nodeSpacingY = 140;
+        const nodesPerRow = 4;
 
-        // Step group node
-        g.setNode(groupId, { width: 300, height: 80 });
-
+        // Step label node (header)
+        const stepLabelId = `step_label_${step.id}`;
         nodes.push({
-            id: groupId,
-            type: "group",
-            position: { x: 0, y: 0 },
-            data: {
-                label: step.name,
-                stepId: step.id,
-                scope: step.scope,
-                repeatPerCard: step.repeatPerCard,
-            },
+            id: stepLabelId,
+            type: "default",
+            position: { x: stepX, y: stepY },
+            data: { label: `${si + 1}. ${step.name}` },
+            draggable: false,
+            selectable: false,
             style: {
-                background: STEP_COLORS[step.id] ?? "#f5f5f5",
-                border: "2px solid #d1d5db",
-                borderRadius: "16px",
-                padding: "16px",
-                paddingTop: "40px",
-                minWidth: "320px",
-                minHeight: "100px",
+                background: color,
+                border: `2px solid #9ca3af`,
+                borderRadius: "12px",
+                padding: "8px 16px",
+                fontSize: "14px",
+                fontWeight: "bold",
+                minWidth: `${nodesPerRow * nodeSpacingX}px`,
+                textAlign: "center" as const,
             },
         });
 
         // Inner nodes
-        for (const node of step.nodes) {
-            const nodeId = `${step.id}__${node.id}`;
+        for (let ni = 0; ni < step.nodes.length; ni++) {
+            const node = step.nodes[ni];
+            const col = ni % nodesPerRow;
+            const row = Math.floor(ni / nodesPerRow);
+            const nodeX = stepX + col * nodeSpacingX + 20;
+            const nodeY = stepY + 60 + row * nodeSpacingY;
+
             const isInput = node.type === "input";
-            const hasAction = actions?.nodes?.[node.id];
-            const contentPreview = node.content ? t(node.content).substring(0, 80) : "";
+            const hasAction = !!actions?.nodes?.[node.id];
+            const contentPreview = node.content ? t(node.content).substring(0, 60) : "(pusty)";
             const optionLabels = node.options?.map((o) => t(o)) ?? [];
 
-            g.setNode(nodeId, { width: 240, height: 80 + (optionLabels.length * 20) });
-            g.setParent(nodeId, groupId);
+            const nodeId = `${step.id}__${node.id}`;
 
             nodes.push({
                 id: nodeId,
                 type: "default",
-                position: { x: 0, y: 0 },
-                parentId: groupId,
-                extent: "parent" as const,
+                position: { x: nodeX, y: nodeY },
                 data: {
-                    label: node.id,
-                    content: contentPreview,
+                    label: `${node.id}\n${contentPreview}${optionLabels.length > 0 ? "\n[" + optionLabels.join("] [") + "]" : ""}`,
                     nodeType: node.type,
                     component: node.component,
                     field: node.field,
-                    options: optionLabels,
-                    hasAction: !!hasAction,
+                    hasAction,
                     stepNode: node,
                     stepId: step.id,
                 },
@@ -84,36 +82,37 @@ export function chatStepsToFlow(
                     background: hasAction ? "#fffbeb" : isInput ? "#ffffff" : "#f8fafc",
                     border: `2px solid ${hasAction ? "#f59e0b" : isInput ? "#3b82f6" : "#e2e8f0"}`,
                     borderRadius: "10px",
-                    padding: "8px 12px",
-                    fontSize: "11px",
-                    minWidth: "200px",
+                    padding: "8px 10px",
+                    fontSize: "10px",
+                    width: "240px",
+                    whiteSpace: "pre-wrap" as const,
+                    lineHeight: "1.3",
                 },
             });
 
-            // Inner edges (within step)
+            // Edges: branches
             if (node.branches) {
-                for (let i = 0; i < node.branches.length; i++) {
-                    const b = node.branches[i];
-                    const targetId = b.next === "__done__" ? null : `${step.id}__${b.next}`;
-                    if (targetId && step.nodes.some((n) => n.id === b.next)) {
-                        g.setEdge(nodeId, targetId);
+                for (let bi = 0; bi < node.branches.length; bi++) {
+                    const b = node.branches[bi];
+                    if (b.next && b.next !== "__done__" && step.nodes.some((n) => n.id === b.next)) {
+                        const targetId = `${step.id}__${b.next}`;
                         edges.push({
-                            id: `${nodeId}-${targetId}-${i}`,
+                            id: `${nodeId}-${targetId}-b${bi}`,
                             source: nodeId,
                             target: targetId,
-                            label: t(b.answer).length > 25 ? t(b.answer).substring(0, 25) + "…" : t(b.answer),
+                            label: t(b.answer).length > 20 ? t(b.answer).substring(0, 20) + "…" : t(b.answer),
                             style: { stroke: "#3b82f6", strokeWidth: 1.5 },
-                            labelStyle: { fontSize: "9px", fill: "#6b7280" },
+                            labelStyle: { fontSize: "8px", fill: "#6b7280" },
                         });
                     }
                 }
             }
 
+            // Edge: next (non-branch)
             if (node.next && node.next !== "__done__" && step.nodes.some((n) => n.id === node.next)) {
                 const targetId = `${step.id}__${node.next}`;
                 const hasBranch = node.branches?.some((b) => b.next === node.next);
                 if (!hasBranch) {
-                    g.setEdge(nodeId, targetId);
                     edges.push({
                         id: `${nodeId}-${targetId}`,
                         source: nodeId,
@@ -123,57 +122,21 @@ export function chatStepsToFlow(
                 }
             }
         }
-    }
 
-    // Step → step edges
-    for (const step of template.steps) {
+        // Step height
+        const rows = Math.ceil(step.nodes.length / nodesPerRow);
+        stepY += 60 + rows * nodeSpacingY + 40;
+
+        // Step → step edge
         if (step.next) {
-            const sourceId = `step_${step.id}`;
-            const targetId = `step_${step.next}`;
-            g.setEdge(sourceId, targetId);
+            const nextStepLabelId = `step_label_${step.next}`;
             edges.push({
-                id: `${sourceId}-${targetId}`,
-                source: sourceId,
-                target: targetId,
+                id: `${stepLabelId}-${nextStepLabelId}`,
+                source: stepLabelId,
+                target: nextStepLabelId,
                 style: { stroke: "#1f2937", strokeWidth: 3 },
                 type: "smoothstep",
             });
-        }
-    }
-
-    // Run dagre layout
-    Dagre.layout(g);
-
-    // Apply positions
-    for (const node of nodes) {
-        const dagreNode = g.node(node.id);
-        if (dagreNode) {
-            if (node.parentId) {
-                // Child node — position relative to parent
-                const parentDagre = g.node(node.parentId);
-                if (parentDagre) {
-                    node.position = {
-                        x: dagreNode.x - parentDagre.x + 20,
-                        y: dagreNode.y - parentDagre.y + 40,
-                    };
-                }
-            } else {
-                node.position = { x: dagreNode.x, y: dagreNode.y };
-            }
-
-            // Resize group to fit children
-            if (node.type === "group") {
-                const children = nodes.filter((n) => n.parentId === node.id);
-                if (children.length > 0) {
-                    const maxX = Math.max(...children.map((c) => c.position.x + 250));
-                    const maxY = Math.max(...children.map((c) => c.position.y + 100));
-                    node.style = {
-                        ...node.style,
-                        width: `${Math.max(maxX + 20, 340)}px`,
-                        height: `${Math.max(maxY + 20, 120)}px`,
-                    };
-                }
-            }
         }
     }
 
