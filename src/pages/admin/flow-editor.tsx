@@ -12,32 +12,39 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { callEdge } from "@/lib/api";
-import { chatStepsToFlow } from "@/lib/flow-converter";
+import { chatStepToFlow } from "@/lib/flow-converter";
 import { QuestionNode } from "@/components/flow/question-node";
 import { AnswerNode } from "@/components/flow/answer-node";
 import { MessageNode } from "@/components/flow/message-node";
-import { StepHeaderNode } from "@/components/flow/step-header-node";
 import { ConditionNode } from "@/components/flow/condition-node";
-import type { FormTemplate, ChatStepsV2, StepNodeV2 } from "@/lib/types";
+import type { FormTemplate, ChatStepsV2, StepV2, StepNodeV2 } from "@/lib/types";
 
 const nodeTypes = {
     question: QuestionNode,
     answer: AnswerNode,
     message: MessageNode,
     condition: ConditionNode,
-    stepHeader: StepHeaderNode,
+};
+
+const STEP_COLORS: Record<string, string> = {
+    greeting: "#e0f2fe",
+    verify_contact: "#fef3c7",
+    card_naming: "#ede9fe",
+    date_selection: "#dcfce7",
+    device_detection: "#fce7f3",
+    consents: "#f1f5f9",
 };
 
 export function FlowEditor() {
     const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-    const [templates, setTemplates] = useState<FormTemplate[]>([]);
-    const [selectedTemplate, setSelectedTemplate] = useState<FormTemplate | null>(null);
+    const [template, setTemplate] = useState<FormTemplate | null>(null);
+    const [steps, setSteps] = useState<StepV2[]>([]);
+    const [activeStepId, setActiveStepId] = useState<string | null>(null);
     const [selectedNodeData, setSelectedNodeData] = useState<{ node: StepNodeV2; stepId: string } | null>(null);
     const [translations, setTranslations] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
 
-    // Load templates + translations
     useEffect(() => {
         (async () => {
             try {
@@ -47,17 +54,18 @@ export function FlowEditor() {
                 ]);
 
                 const trans: Record<string, string> = {};
-                for (const t of transRes.translations ?? []) {
-                    trans[t.key] = t.pl;
-                }
+                for (const t of transRes.translations ?? []) trans[t.key] = t.pl;
                 setTranslations(trans);
 
-                const chatTemplates = (tplRes.templates ?? []).filter(
-                    (t: any) => t.steps?.format === "chat_steps" || t.steps?.format === "chat_tree"
-                );
-                setTemplates(chatTemplates);
-                if (chatTemplates.length > 0) {
-                    loadTemplate(chatTemplates[0], trans);
+                const chatTpl = (tplRes.templates ?? []).find((t: any) => t.steps?.format === "chat_steps");
+                if (chatTpl) {
+                    setTemplate(chatTpl);
+                    const s = (chatTpl.steps as ChatStepsV2).steps;
+                    setSteps(s);
+                    if (s.length > 0) {
+                        setActiveStepId(s[0].id);
+                        loadStep(s[0], chatTpl, trans);
+                    }
                 }
             } catch (err) {
                 console.error("Failed to load:", err);
@@ -67,20 +75,21 @@ export function FlowEditor() {
         })();
     }, []);
 
-    const loadTemplate = useCallback((template: FormTemplate, trans?: Record<string, string>) => {
-        setSelectedTemplate(template);
+    const loadStep = useCallback((step: StepV2, tpl?: FormTemplate, trans?: Record<string, string>) => {
         setSelectedNodeData(null);
+        const t = tpl ?? template;
+        const tr = trans ?? translations;
+        if (!t) return;
+        const { nodes: flowNodes, edges: flowEdges } = chatStepToFlow(step, t.actions, tr);
+        setNodes(flowNodes);
+        setEdges(flowEdges);
+    }, [template, translations]);
 
-        if (template.steps.format === "chat_steps") {
-            const { nodes: flowNodes, edges: flowEdges } = chatStepsToFlow(
-                template.steps as ChatStepsV2,
-                template.actions,
-                trans ?? translations,
-            );
-            setNodes(flowNodes);
-            setEdges(flowEdges);
-        }
-    }, [translations]);
+    const selectStep = useCallback((stepId: string) => {
+        setActiveStepId(stepId);
+        const step = steps.find((s) => s.id === stepId);
+        if (step) loadStep(step);
+    }, [steps, loadStep]);
 
     const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
         if (node.data.stepNode) {
@@ -88,10 +97,14 @@ export function FlowEditor() {
         }
     }, []);
 
+    const activeStep = steps.find((s) => s.id === activeStepId);
+    const activeStepAction = template?.actions?.steps?.[activeStepId ?? ""];
+    const nextStep = steps.find((s) => s.id === activeStep?.next);
+
     if (loading) {
         return (
             <div className="h-screen flex items-center justify-center">
-                <p className="text-sm text-fg-quaternary">Ładowanie...</p>
+                <p className="text-sm text-gray-400">Ładowanie...</p>
             </div>
         );
     }
@@ -99,75 +112,140 @@ export function FlowEditor() {
     return (
         <div className="h-screen flex flex-col">
             {/* Top bar */}
-            <div className="h-14 border-b border-border flex items-center justify-between px-4 bg-bg-primary shrink-0">
-                <div className="flex items-center gap-3">
-                    <h1 className="text-md font-semibold text-fg-primary">Form Builder</h1>
-                    {templates.map((t) => (
-                        <button
-                            key={t.id}
-                            onClick={() => loadTemplate(t)}
-                            className={`px-3 py-1 text-xs rounded-full border ${
-                                selectedTemplate?.id === t.id
-                                    ? "bg-blue-50 text-blue-700 border-blue-200"
-                                    : "bg-bg-secondary text-fg-secondary border-border"
-                            }`}
-                        >
-                            {t.name} ({t.steps.format})
-                        </button>
-                    ))}
-                    <span className="text-xs text-fg-quaternary ml-2">
-                        {nodes.length} nodes · {edges.length} edges
-                    </span>
-                </div>
+            <div className="h-12 border-b border-gray-200 flex items-center justify-between px-4 bg-white shrink-0">
+                <h1 className="text-sm font-bold text-gray-800">Form Builder</h1>
                 <button className="px-4 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
                     Zapisz
                 </button>
             </div>
 
-            {/* Main */}
             <div className="flex-1 flex min-h-0">
-                {/* Flow canvas */}
-                <div className="flex-1">
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        nodeTypes={nodeTypes}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onNodeClick={onNodeClick}
-                        fitView
-                        minZoom={0.05}
-                        maxZoom={2}
-                    >
-                        <Background gap={20} />
-                        <Controls />
-                        <MiniMap
-                            nodeColor={(node) => {
-                                if (node.type === "group") return "#d1d5db";
-                                const t = node.data?.nodeType;
-                                return t === "input" ? "#3b82f6" : "#94a3b8";
-                            }}
-                            style={{ height: 120 }}
-                        />
-                    </ReactFlow>
+                {/* Left: step list */}
+                <div className="w-56 border-r border-gray-200 bg-gray-50 flex flex-col shrink-0">
+                    <div className="p-3 border-b border-gray-200">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Kroki ({steps.length})</p>
+                    </div>
+                    <div className="flex-1 overflow-y-auto">
+                        {steps.map((step, i) => (
+                            <button
+                                key={step.id}
+                                onClick={() => selectStep(step.id)}
+                                className={`w-full text-left px-3 py-2.5 border-b border-gray-100 transition-colors ${
+                                    activeStepId === step.id
+                                        ? "bg-white border-l-3 border-l-blue-500"
+                                        : "hover:bg-white"
+                                }`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <div
+                                        className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold text-gray-600"
+                                        style={{ background: STEP_COLORS[step.id] ?? "#f5f5f5" }}
+                                    >
+                                        {i + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-semibold text-gray-700 truncate">{step.name}</p>
+                                        <div className="flex gap-1 mt-0.5">
+                                            <span className="text-[9px] text-gray-400">{step.scope}</span>
+                                            {step.repeatPerCard && (
+                                                <span className="text-[9px] text-purple-500">per karta</span>
+                                            )}
+                                            <span className="text-[9px] text-gray-400">· {step.nodes.length} nodes</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
-                {/* Side panel */}
-                <div className="w-96 border-l border-border bg-bg-primary flex flex-col shrink-0 overflow-hidden">
+                {/* Center: flow graph */}
+                <div className="flex-1 flex flex-col">
+                    {/* Step info bar */}
+                    {activeStep && (
+                        <div className="px-4 py-2 border-b border-gray-200 bg-white flex items-center justify-between shrink-0"
+                            style={{ borderLeft: `4px solid ${STEP_COLORS[activeStep.id] ?? "#d1d5db"}` }}>
+                            <div>
+                                <h2 className="text-sm font-bold text-gray-800">{activeStep.name}</h2>
+                                <p className="text-[10px] text-gray-400">
+                                    {activeStep.nodes.length} nodes · {activeStep.scope}{activeStep.repeatPerCard ? " · powtarzany per karta" : ""}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Graph */}
+                    <div className="flex-1">
+                        <ReactFlow
+                            nodes={nodes}
+                            edges={edges}
+                            nodeTypes={nodeTypes}
+                            onNodesChange={onNodesChange}
+                            onEdgesChange={onEdgesChange}
+                            onNodeClick={onNodeClick}
+                            fitView
+                            minZoom={0.1}
+                            maxZoom={2}
+                        >
+                            <Background gap={20} />
+                            <Controls />
+                            <MiniMap
+                                nodeColor={(node) => {
+                                    if (node.type === "condition") return "#8b5cf6";
+                                    if (node.type === "answer") return "#22c55e";
+                                    if (node.type === "question") return "#3b82f6";
+                                    return "#94a3b8";
+                                }}
+                                style={{ height: 100 }}
+                            />
+                        </ReactFlow>
+                    </div>
+
+                    {/* Bottom: step output */}
+                    {activeStep && (
+                        <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 shrink-0">
+                            <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold text-gray-400 uppercase">Następny krok:</span>
+                                    {nextStep ? (
+                                        <button
+                                            onClick={() => selectStep(nextStep.id)}
+                                            className="text-xs font-semibold text-blue-600 hover:underline"
+                                        >
+                                            {nextStep.name} →
+                                        </button>
+                                    ) : (
+                                        <span className="text-xs text-gray-400">koniec formularza</span>
+                                    )}
+                                </div>
+                                {activeStepAction?.onComplete?.save && (
+                                    <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-bold text-gray-400 uppercase">Zapisuje:</span>
+                                        {activeStepAction.onComplete.save.map((f: string) => (
+                                            <span key={f} className="text-[10px] font-mono bg-green-50 text-green-700 px-1.5 py-0.5 rounded">
+                                                {f}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Right: node detail */}
+                <div className="w-80 border-l border-gray-200 bg-white flex flex-col shrink-0 overflow-hidden">
                     {selectedNodeData ? (
                         <NodeDetailPanel
                             node={selectedNodeData.node}
                             stepId={selectedNodeData.stepId}
                             translations={translations}
-                            actions={selectedTemplate?.actions}
+                            actions={template?.actions}
                             onClose={() => setSelectedNodeData(null)}
                         />
                     ) : (
-                        <div className="flex-1 flex items-center justify-center p-6">
-                            <div className="text-center space-y-2">
-                                <p className="text-sm text-fg-quaternary">Kliknij node na grafie</p>
-                                <p className="text-xs text-fg-disabled">Grupy (kolorowe) = stepy formularza<br />Boxy wewnątrz = poszczególne pytania/wiadomości</p>
-                            </div>
+                        <div className="flex-1 flex items-center justify-center p-4">
+                            <p className="text-xs text-gray-400 text-center">Kliknij node na grafie</p>
                         </div>
                     )}
                 </div>
@@ -188,101 +266,79 @@ function NodeDetailPanel({ node, stepId, translations, actions, onClose }: {
 
     return (
         <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
+            <div className="p-3 border-b border-gray-200 flex items-center justify-between shrink-0">
                 <div>
-                    <h3 className="text-sm font-semibold text-fg-primary font-mono">{node.id}</h3>
-                    <div className="flex gap-1.5 mt-1 flex-wrap">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
-                            step: {stepId}
-                        </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    <h3 className="text-xs font-bold text-gray-800 font-mono">{node.id}</h3>
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
                             node.type === "input" ? "bg-blue-100 text-blue-700" : "bg-gray-100 text-gray-600"
-                        }`}>
-                            {node.type}
-                        </span>
+                        }`}>{node.type}</span>
                         {node.component && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">
-                                {node.component}
-                            </span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">{node.component}</span>
                         )}
                         {nodeAction && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
-                                has action
-                            </span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">⚡ action</span>
                         )}
                     </div>
                 </div>
-                <button onClick={onClose} className="text-fg-quaternary hover:text-fg-primary text-lg">×</button>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">×</button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {/* i18n Content */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
                 {node.content && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">Treść</label>
-                        <p className="mt-1 text-[10px] font-mono text-fg-disabled">{node.content}</p>
-                        <div className="mt-1 p-3 bg-bg-secondary rounded-lg text-sm text-fg-secondary whitespace-pre-wrap">
-                            {t(node.content)}
-                        </div>
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Treść</label>
+                        <p className="text-[9px] font-mono text-gray-400 mt-0.5">{node.content}</p>
+                        <div className="mt-1 p-2 bg-gray-50 rounded text-xs text-gray-700 whitespace-pre-wrap">{t(node.content)}</div>
                     </div>
                 )}
 
-                {/* Field */}
                 {node.field && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">Pole</label>
-                        <p className="mt-1 text-sm font-mono text-fg-primary">{node.field}</p>
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Pole</label>
+                        <p className="text-xs font-mono text-gray-800 mt-0.5">{node.field}</p>
                     </div>
                 )}
 
-                {/* Options */}
                 {node.options && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">
-                            Opcje ({node.options.length})
-                        </label>
-                        <div className="mt-2 space-y-1.5">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Opcje ({node.options.length})</label>
+                        <div className="mt-1 space-y-1">
                             {node.options.map((opt, i) => (
-                                <div key={i} className="px-3 py-2 bg-bg-secondary border border-border rounded-lg">
-                                    <p className="text-sm text-fg-primary">{t(opt)}</p>
-                                    <p className="text-[10px] font-mono text-fg-disabled mt-0.5">{opt}</p>
+                                <div key={i} className="px-2 py-1.5 bg-gray-50 border border-gray-200 rounded text-xs">
+                                    <p className="text-gray-800">{t(opt)}</p>
+                                    <p className="text-[9px] font-mono text-gray-400">{opt}</p>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* Branches */}
                 {node.branches && node.branches.length > 0 && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">
-                            Branches ({node.branches.length})
-                        </label>
-                        <div className="mt-2 space-y-2">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Branches ({node.branches.length})</label>
+                        <div className="mt-1 space-y-1">
                             {node.branches.map((b, i) => (
-                                <div key={i} className="p-2 bg-bg-secondary border border-border rounded-lg">
-                                    <p className="text-xs text-fg-secondary">{t(b.answer)}</p>
-                                    <p className="text-[10px] font-mono text-fg-disabled">{b.answer}</p>
-                                    <p className="text-sm text-fg-primary mt-1">→ <span className="font-mono font-medium">{b.next}</span></p>
+                                <div key={i} className="p-1.5 bg-gray-50 border border-gray-200 rounded">
+                                    <p className="text-[10px] text-gray-600">{t(b.answer)}</p>
+                                    <p className="text-[10px] text-gray-800 mt-0.5">→ <span className="font-mono font-medium">{b.next}</span></p>
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* Next */}
                 {node.next && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">Next</label>
-                        <p className="mt-1 text-sm font-mono text-fg-primary">→ {node.next}</p>
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Next</label>
+                        <p className="text-xs font-mono text-gray-800 mt-0.5">→ {node.next}</p>
                     </div>
                 )}
 
-                {/* Action */}
                 {nodeAction && (
                     <div>
-                        <label className="text-xs font-semibold text-fg-quaternary uppercase tracking-wider">Akcje</label>
-                        <pre className="mt-1 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] font-mono text-amber-800 overflow-x-auto">
+                        <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Akcje</label>
+                        <pre className="mt-1 p-2 bg-amber-50 border border-amber-200 rounded text-[9px] font-mono text-amber-800 overflow-x-auto">
                             {JSON.stringify(nodeAction, null, 2)}
                         </pre>
                     </div>
